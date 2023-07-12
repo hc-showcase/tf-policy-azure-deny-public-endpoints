@@ -1,0 +1,56 @@
+// Importing the tfplan and strings helper functions
+import "tfplan"
+import "strings"
+
+// Define a list of Azure resource types that could have private endpoints
+resource_types = {
+  "azurerm_private_endpoint",
+  "azurerm_sql_server",
+  "azurerm_cosmosdb_account",
+  "azurerm_app_service",
+  // Add additional PaaS resources here...
+}
+
+main = rule {
+  all tfplan.resources as _, resources {
+
+    // Check that the resource is one of the types that we're interested in
+    resources is resource_types
+    all resources as _, instances {
+      all instances as _, instance {
+
+        // We only need to check instances that are being created or updated
+        (instance.change.actions contains "create" or
+        instance.change.actions is ["update"]) and
+        instance_applies(instance)
+      }
+    }
+  }
+}
+
+// Helper function to check if an instance applies to the rule
+instance_applies = func(instance) {
+
+  // If the instance is being updated, use the after state. Otherwise, use the before state.
+  if length(instance.change.after) > 0 {
+    endpoint = instance.change.after
+  } else {
+    endpoint = instance.change.before
+  }
+
+  // Check that all Private Endpoints have a private IP address
+  // This can be adjusted to check for other properties as needed
+  endpoint.private_service_connection.private_connection_resource_id else false
+  and endpoint.private_service_connection.subresource_names contains "ipconfigurations"
+  and endpoint.private_service_connection.subresource_names contains "privateipaddresses"
+
+  // If the instance is a PaaS resource, check that it has a private endpoint configured
+  if strings.has_prefix(instance.type, "azurerm_") and
+     instance.type != "azurerm_private_endpoint" {
+    endpoint.private_endpoint_network_policies is "disabled"
+  } else {
+    true
+  }
+}
+
+
